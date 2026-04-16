@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Kids Event — Sign Up</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="hero">
+        <div class="steps">
+          <span class="step current">1. Your info</span>
+          <span class="step-sep">›</span>
+          <span class="step">2. Payment</span>
+        </div>
+        <img id="event-logo" class="logo" alt="" hidden />
+        <h1 id="event-name">Loading…</h1>
+        <p id="event-desc" class="muted"></p>
+        <p class="meta" id="event-meta"></p>
+      </header>
+
+      <form id="signup-form" novalidate>
+        <section class="card">
+          <h2>Parent / guardian</h2>
+          <div class="grid-2">
+            <label>Full name <span class="req">*</span>
+              <input name="parentName" autocomplete="name" required />
+            </label>
+            <label>Email <span class="req">*</span>
+              <input name="parentEmail" type="email" autocomplete="email" required />
+            </label>
+            <label>Phone <span class="req">*</span>
+              <input name="parentPhone" type="tel" autocomplete="tel" required />
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Emergency contact</h2>
+          <p class="muted small">Someone we can reach if we can't reach you.</p>
+          <div class="grid-2">
+            <label>Name <span class="req">*</span>
+              <input name="emergencyName" required />
+            </label>
+            <label>Phone <span class="req">*</span>
+              <input name="emergencyPhone" type="tel" required />
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="row-between">
+            <h2>Children</h2>
+            <button type="button" class="ghost" id="add-child">+ Add child</button>
+          </div>
+          <div id="children"></div>
+        </section>
+
+        <div id="errors" class="errors" hidden></div>
+
+        <div class="submit-row">
+          <div class="total">
+            Total: <strong id="total">$0.00</strong>
+          </div>
+          <button type="submit" id="submit-btn" class="primary">Continue to payment →</button>
+        </div>
+        <p class="muted small center">Next step: enter your card details. Payments processed securely by Stripe.</p>
+      </form>
+    </main>
+
+    <template id="child-template">
+      <fieldset class="child">
+        <legend>Child <span class="child-num">1</span>
+          <button type="button" class="ghost small remove-child" aria-label="Remove">Remove</button>
+        </legend>
+        <div class="grid-2">
+          <label>Name <span class="req">*</span>
+            <input data-field="name" required />
+          </label>
+          <label>Age <span class="req">*</span>
+            <input data-field="age" type="number" min="0" max="18" required />
+          </label>
+        </div>
+        <label>Allergies
+          <input data-field="allergies" placeholder="e.g. peanuts, bee stings — or 'none'" />
+        </label>
+        <label>Medical notes
+          <textarea data-field="medicalNotes" rows="2" placeholder="Medications, conditions, anything we should know"></textarea>
+        </label>
+        <label class="checkbox">
+          <input data-field="photoConsent" type="checkbox" />
+          I consent to photos/video of my child being used by the event organizer.
+        </label>
+      </fieldset>
+    </template>
+
+    <script>
+      let EVENT = null;
+
+      async function loadEvent() {
+        const res = await fetch('/api/event');
+        EVENT = await res.json();
+        document.getElementById('event-name').textContent = EVENT.name;
+        document.getElementById('event-desc').textContent = EVENT.description;
+
+        // Try to load a logo from /logo.png (drop one in /public to use it).
+        const logo = document.getElementById('event-logo');
+        logo.src = '/logo.png';
+        logo.alt = EVENT.name + ' logo';
+        logo.onerror = () => { logo.hidden = true; };
+        logo.onload = () => { logo.hidden = false; };
+
+        const bits = [];
+        if (EVENT.date) {
+          bits.push(new Date(EVENT.date).toLocaleDateString(undefined,
+            { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+        }
+        const priceText = EVENT.priceLabel || (formatMoney(EVENT.priceCents, EVENT.currency) + ' per child');
+        bits.push('<strong>' + escapeHtml(priceText) + '</strong>');
+        if (EVENT.spotsRemaining != null) {
+          bits.push(EVENT.spotsRemaining + ' / ' + EVENT.capacity + ' spots left');
+        }
+        document.getElementById('event-meta').innerHTML = bits.join(' · ');
+
+        if (EVENT.spotsRemaining === 0) {
+          document.getElementById('submit-btn').disabled = true;
+          document.getElementById('submit-btn').textContent = 'Event is full';
+        }
+        updateTotal();
+      }
+
+      function formatMoney(cents, currency) {
+        return new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency: (currency || 'usd').toUpperCase(),
+        }).format(cents / 100);
+      }
+
+      function addChild() {
+        const container = document.getElementById('children');
+        const tpl = document.getElementById('child-template').content.cloneNode(true);
+        container.appendChild(tpl);
+        renumberChildren();
+        updateTotal();
+      }
+
+      function renumberChildren() {
+        const kids = document.querySelectorAll('#children .child');
+        kids.forEach((el, i) => {
+          el.querySelector('.child-num').textContent = i + 1;
+          el.querySelector('.remove-child').style.display = kids.length > 1 ? '' : 'none';
+        });
+      }
+
+      function updateTotal() {
+        if (!EVENT) return;
+        const count = document.querySelectorAll('#children .child').length;
+        document.getElementById('total').textContent = formatMoney(
+          EVENT.priceCents * count,
+          EVENT.currency
+        );
+      }
+
+      function readChildren() {
+        return Array.from(document.querySelectorAll('#children .child')).map((el) => ({
+          name: el.querySelector('[data-field="name"]').value,
+          age: el.querySelector('[data-field="age"]').value,
+          allergies: el.querySelector('[data-field="allergies"]').value,
+          medicalNotes: el.querySelector('[data-field="medicalNotes"]').value,
+          photoConsent: el.querySelector('[data-field="photoConsent"]').checked,
+        }));
+      }
+
+      document.getElementById('add-child').addEventListener('click', addChild);
+
+      document.getElementById('children').addEventListener('click', (e) => {
+        if (e.target.matches('.remove-child')) {
+          e.target.closest('.child').remove();
+          renumberChildren();
+          updateTotal();
+        }
+      });
+
+      document.getElementById('signup-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const btn = document.getElementById('submit-btn');
+        const errBox = document.getElementById('errors');
+        errBox.hidden = true;
+        errBox.innerHTML = '';
+
+        const fd = new FormData(e.target);
+        const payload = {
+          parentName: fd.get('parentName'),
+          parentEmail: fd.get('parentEmail'),
+          parentPhone: fd.get('parentPhone'),
+          emergencyName: fd.get('emergencyName'),
+          emergencyPhone: fd.get('emergencyPhone'),
+          children: readChildren(),
+        };
+
+        btn.disabled = true;
+        btn.textContent = 'Redirecting…';
+        try {
+          const res = await fetch('/api/signup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            errBox.hidden = false;
+            errBox.innerHTML =
+              '<strong>Please fix the following:</strong><ul>' +
+              (data.errors || ['Unknown error']).map((m) => '<li>' + escapeHtml(m) + '</li>').join('') +
+              '</ul>';
+            btn.disabled = false;
+            btn.textContent = 'Continue to payment →';
+            window.scrollTo({ top: errBox.offsetTop - 20, behavior: 'smooth' });
+            return;
+          }
+          // Go to Step 2 (on-site payment page) with our signup id.
+          window.location.href = data.next || ('/pay.html?sid=' + encodeURIComponent(data.signupId));
+        } catch (err) {
+          errBox.hidden = false;
+          errBox.textContent = 'Network error — please try again.';
+          btn.disabled = false;
+          btn.textContent = 'Continue to payment →';
+        }
+      });
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[c]));
+      }
+
+      // Init
+      addChild();
+      loadEvent();
+    </script>
+  </body>
+</html>

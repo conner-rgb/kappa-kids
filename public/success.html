@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>You're signed up!</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container narrow">
+      <div class="card center">
+        <div class="checkmark">✓</div>
+        <h1>You're signed up!</h1>
+        <p id="msg" class="muted">Confirming your payment…</p>
+        <p><a href="/">Register another child</a></p>
+      </div>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const sid = params.get('sid');
+      const cs = params.get('cs');
+
+      async function confirm() {
+        if (!sid) return;
+        try {
+          // Best effort — the webhook also confirms asynchronously.
+          if (cs) {
+            await fetch('/api/confirm', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sid, cs }),
+            });
+          }
+          const res = await fetch('/api/signup/' + encodeURIComponent(sid));
+          const data = await res.json();
+          const msg = document.getElementById('msg');
+          if (data.status === 'paid') {
+            const amt = (data.amountPaid / 100).toLocaleString(undefined, {
+              style: 'currency', currency: 'USD',
+            });
+            msg.innerHTML =
+              'Thanks, <strong>' + escapeHtml(data.parentName) + '</strong>. ' +
+              'We\'ve registered ' + data.childCount + ' child' + (data.childCount > 1 ? 'ren' : '') +
+              '. A receipt for ' + amt + ' was sent by Stripe to your email.';
+          } else {
+            msg.textContent = 'Your signup is recorded. Payment is still processing — you\'ll get an email receipt shortly.';
+          }
+        } catch (e) {
+          document.getElementById('msg').textContent = 'Your signup was received. Check your email for confirmation.';
+        }
+      }
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      }
+      confirm();
+    </script>
+  </body>
+</html>

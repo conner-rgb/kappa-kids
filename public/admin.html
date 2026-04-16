@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Signups — Admin</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container wide">
+      <header class="row-between">
+        <h1>Sign-ups</h1>
+        <div>
+          <button id="refresh" class="ghost">Refresh</button>
+          <button id="export" class="ghost">Export CSV</button>
+        </div>
+      </header>
+      <p class="muted"><span id="stats"></span></p>
+      <div id="table-wrap"></div>
+    </main>
+
+    <script>
+      async function load() {
+        const token = new URLSearchParams(location.search).get('token');
+        const headers = token ? { Authorization: 'Bearer ' + token } : {};
+        const res = await fetch('/api/admin/signups', { headers });
+        if (!res.ok) {
+          document.getElementById('table-wrap').innerHTML =
+            '<p class="errors">Unauthorized. Add <code>?token=YOUR_ADMIN_TOKEN</code> to the URL, or run from localhost.</p>';
+          return;
+        }
+        const rows = await res.json();
+        render(rows);
+      }
+
+      function render(rows) {
+        const paid = rows.filter((r) => r.status === 'paid');
+        const pending = rows.filter((r) => r.status !== 'paid');
+        const totalKids = paid.reduce((s, r) => s + r.children.length, 0);
+        const totalCents = paid.reduce((s, r) => s + (r.amountPaid || 0), 0);
+        document.getElementById('stats').textContent =
+          paid.length + ' paid registrations · ' + totalKids + ' children · ' +
+          (totalCents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' }) +
+          ' collected · ' + pending.length + ' pending';
+
+        const cols = [
+          ['Status', (r) => '<span class="pill pill-' + r.status + '">' + r.status + '</span>'],
+          ['Parent', (r) => escapeHtml(r.parent.name) + '<br><small class="muted">' +
+            escapeHtml(r.parent.email) + ' · ' + escapeHtml(r.parent.phone) + '</small>'],
+          ['Emergency', (r) => escapeHtml(r.emergency.name) + '<br><small class="muted">' +
+            escapeHtml(r.emergency.phone) + '</small>'],
+          ['Children', (r) => r.children.map((c) =>
+            '<div>' + escapeHtml(c.name) + ' (' + c.age + ')' +
+              (c.allergies ? '<br><small class="muted">Allergies: ' + escapeHtml(c.allergies) + '</small>' : '') +
+              (c.medicalNotes ? '<br><small class="muted">Medical: ' + escapeHtml(c.medicalNotes) + '</small>' : '') +
+              (c.photoConsent ? '<br><small class="muted">✓ Photo consent</small>' : '') +
+            '</div>'
+          ).join('')],
+          ['Paid', (r) => r.amountPaid ? ((r.amountPaid / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' })) : '—'],
+          ['Created', (r) => new Date(r.createdAt).toLocaleString()],
+        ];
+
+        const html =
+          '<table><thead><tr>' +
+          cols.map((c) => '<th>' + c[0] + '</th>').join('') +
+          '</tr></thead><tbody>' +
+          rows
+            .slice()
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            .map((r) => '<tr>' + cols.map((c) => '<td>' + c[1](r) + '</td>').join('') + '</tr>')
+            .join('') +
+          '</tbody></table>';
+        document.getElementById('table-wrap').innerHTML = html || '<p>No signups yet.</p>';
+
+        document.getElementById('export').onclick = () => downloadCsv(rows);
+      }
+
+      function downloadCsv(rows) {
+        const header = [
+          'status','createdAt','paidAt','amount',
+          'parentName','parentEmail','parentPhone',
+          'emergencyName','emergencyPhone',
+          'childName','childAge','allergies','medicalNotes','photoConsent'
+        ];
+        const lines = [header.join(',')];
+        rows.forEach((r) => {
+          r.children.forEach((c) => {
+            lines.push([
+              r.status, r.createdAt, r.paidAt || '', ((r.amountPaid || 0) / 100).toFixed(2),
+              r.parent.name, r.parent.email, r.parent.phone,
+              r.emergency.name, r.emergency.phone,
+              c.name, c.age, c.allergies, c.medicalNotes, c.photoConsent ? 'yes' : 'no',
+            ].map(csvCell).join(','));
+          });
+        });
+        const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'signups-' + new Date().toISOString().slice(0, 10) + '.csv';
+        a.click();
+      }
+      function csvCell(v) {
+        const s = String(v ?? '');
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }
+      function escapeHtml(s) {
+        return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      }
+
+      document.getElementById('refresh').onclick = load;
+      load();
+    </script>
+  </body>
+</html>

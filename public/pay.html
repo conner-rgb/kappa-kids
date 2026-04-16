@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Step 2 — Payment</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://js.stripe.com/v3/"></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="hero">
+        <div class="steps">
+          <span class="step done">1. Your info</span>
+          <span class="step-sep">›</span>
+          <span class="step current">2. Payment</span>
+        </div>
+        <h1>Enter your payment details</h1>
+        <p class="muted">Secure payment processing by Stripe.</p>
+      </header>
+
+      <div id="checkout" class="card">
+        <p class="muted center" id="checkout-loading">Loading secure payment form…</p>
+      </div>
+
+      <div id="dev-banner" class="card center" hidden>
+        <h2>Dev mode</h2>
+        <p class="muted">
+          No Stripe keys configured. Click below to simulate a successful payment
+          so you can preview the flow.
+        </p>
+        <button id="dev-pay" class="primary">Simulate successful payment</button>
+      </div>
+
+      <p class="center">
+        <a href="/" id="back-link" class="muted small">← Back to edit your info</a>
+      </p>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      const sid = params.get('sid');
+      const dev = params.get('dev') === '1';
+
+      async function init() {
+        if (!sid) {
+          document.getElementById('checkout').innerHTML =
+            '<p class="errors">Missing signup reference. <a href="/">Start over</a>.</p>';
+          return;
+        }
+
+        if (dev) {
+          document.getElementById('checkout').hidden = true;
+          document.getElementById('dev-banner').hidden = false;
+          document.getElementById('dev-pay').onclick = async () => {
+            // Mark paid via a tiny admin-free endpoint: just hit /api/confirm
+            // without a cs param — server won't mark it paid, but we'll route
+            // the user through success anyway since this is dev mode.
+            await fetch('/api/confirm-dev/' + encodeURIComponent(sid), { method: 'POST' })
+              .catch(() => {});
+            location.href = '/success.html?sid=' + encodeURIComponent(sid) + '&dev=1';
+          };
+          return;
+        }
+
+        const [cfgRes, coRes] = await Promise.all([
+          fetch('/api/stripe-config'),
+          fetch('/api/checkout/' + encodeURIComponent(sid)),
+        ]);
+        const cfg = await cfgRes.json();
+        const co = await coRes.json();
+
+        if (co.status === 'paid') {
+          location.href = '/success.html?sid=' + encodeURIComponent(sid);
+          return;
+        }
+
+        if (!cfg.configured || !co.clientSecret) {
+          document.getElementById('checkout').innerHTML =
+            '<p class="errors">Stripe isn\'t fully configured yet. ' +
+            'Add <code>STRIPE_SECRET_KEY</code> and <code>STRIPE_PUBLISHABLE_KEY</code> to your .env and restart the server.</p>';
+          return;
+        }
+
+        const stripe = Stripe(cfg.publishableKey);
+        const checkout = await stripe.initEmbeddedCheckout({
+          clientSecret: co.clientSecret,
+        });
+        document.getElementById('checkout-loading').remove();
+        checkout.mount('#checkout');
+      }
+
+      init();
+    </script>
+  </body>
+</html>

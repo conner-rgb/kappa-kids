@@ -1,0 +1,44 @@
+# Render.com blueprint — tells Render how to build & run this app.
+# You don't need this to deploy (you can also set it up manually in the UI),
+# but having it in the repo means future deploys are one-click.
+services:
+  - type: web
+    name: kappa-kids
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PUBLIC_URL
+        sync: false       # set per-environment in the Render dashboard
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        sync: false
+      - key: RESEND_REPLY_TO
+        sync: false
+      - key: EVENT_NAME
+        sync: false
+      - key: EVENT_DESCRIPTION
+        sync: false
+      - key: EVENT_PRICE_CENTS
+        sync: false
+      - key: EVENT_CURRENCY
+        sync: false
+      - key: EVENT_PRICE_LABEL
+        sync: false
+      - key: EVENT_CAPACITY
+        sync: false
+      - key: EVENT_DATE
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true   # Render auto-generates a strong random token
