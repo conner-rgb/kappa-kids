@@ -82,9 +82,6 @@
             <input data-field="age" type="number" min="0" max="18" required />
           </label>
         </div>
-        <label>Allergies
-          <input data-field="allergies" placeholder="e.g. peanuts, bee stings — or 'none'" />
-        </label>
         <label class="checkbox">
           <input data-field="photoConsent" type="checkbox" required />
           <span>I consent to photos/video of my child being used by the event organizer. <span class="req">*</span></span>
@@ -163,7 +160,6 @@
         return Array.from(document.querySelectorAll('#children .child')).map((el) => ({
           name: el.querySelector('[data-field="name"]').value,
           age: el.querySelector('[data-field="age"]').value,
-          allergies: el.querySelector('[data-field="allergies"]').value,
           photoConsent: el.querySelector('[data-field="photoConsent"]').checked,
         }));
       }

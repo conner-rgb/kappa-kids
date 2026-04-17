@@ -427,7 +427,6 @@ app.post('/api/signup', async (req, res) => {
       children: children.map((c) => ({
         name: c.name.trim(),
         age: Number(c.age),
-        allergies: (c.allergies || '').trim(),
         photoConsent: !!c.photoConsent,
       })),
     };
