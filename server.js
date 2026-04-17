@@ -79,6 +79,12 @@ async function sendConfirmationEmail(signup) {
       .join(', ');
     const amount = money(signup.amountPaid, EVENT.currency);
     const subject = `You're signed up — ${EVENT.name}`;
+    const isSub = !!signup.stripeSubscriptionId;
+    const manageUrl = `${PUBLIC_URL}/manage?sid=${signup.id}`;
+    const renewalNote = isSub
+      ? `This is an annual membership — your card will be charged ${amount} again each year until you cancel.`
+      : null;
+
     const text = [
       `Hi ${signup.parent.name},`,
       '',
@@ -87,6 +93,8 @@ async function sendConfirmationEmail(signup) {
       `Registered: ${childList}`,
       '',
       EVENT.date ? `Event date: ${EVENT.date}` : null,
+      renewalNote,
+      isSub ? `Manage your subscription (cancel, update card, view invoices): ${manageUrl}` : null,
       '',
       'If you need to make any changes, just reply to this email.',
       '',
@@ -105,7 +113,14 @@ async function sendConfirmationEmail(signup) {
           <div>${escapeHtml(childList)}</div>
           ${EVENT.date ? `<div style="margin-top:8px;font-size:0.85rem;color:#6b7280;">Event date: ${escapeHtml(EVENT.date)}</div>` : ''}
         </div>
-        <p>If you need to make any changes, just reply to this email.</p>
+        ${renewalNote ? `<p style="font-size:0.92rem;color:#374151;">${escapeHtml(renewalNote)}</p>` : ''}
+        ${isSub ? `
+          <p style="margin:22px 0;">
+            <a href="${manageUrl}" style="display:inline-block;background:#1D3D82;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600;">Manage subscription</a>
+          </p>
+          <p style="font-size:0.85rem;color:#6b7280;">Use the button above any time to cancel, update your card, or view past invoices.</p>
+        ` : ''}
+        <p>If you need any help, just reply to this email.</p>
         <p style="color:#6b7280;font-size:0.85rem;margin-top:28px;">— ${escapeHtml(EVENT.name)}</p>
       </div>`;
 
@@ -203,19 +218,53 @@ app.post(
       return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const signupId = session.metadata?.signupId;
-      if (signupId) {
-        const updated = updateSignup(signupId, {
-          status: 'paid',
-          stripeSessionId: session.id,
-          amountPaid: session.amount_total,
-          paidAt: new Date().toISOString(),
-        });
-        console.log(`✓ Signup ${signupId} marked paid.`);
-        if (updated) sendConfirmationEmail(updated);
+    try {
+      if (event.type === 'checkout.session.completed') {
+        const session = event.data.object;
+        const signupId = session.metadata?.signupId;
+        if (signupId) {
+          const updated = updateSignup(signupId, {
+            status: 'paid',
+            stripeSessionId: session.id,
+            stripeSubscriptionId: session.subscription || null,
+            stripeCustomerId: session.customer || null,
+            amountPaid: session.amount_total,
+            paidAt: new Date().toISOString(),
+          });
+          console.log(`✓ Signup ${signupId} marked paid.`);
+          if (updated) sendConfirmationEmail(updated);
+        }
+      } else if (event.type === 'customer.subscription.deleted') {
+        const sub = event.data.object;
+        const signupId = sub.metadata?.signupId;
+        if (signupId) {
+          updateSignup(signupId, {
+            status: 'cancelled',
+            cancelledAt: new Date().toISOString(),
+          });
+          console.log(`✓ Signup ${signupId} marked cancelled.`);
+        }
+      } else if (event.type === 'invoice.payment_failed') {
+        const invoice = event.data.object;
+        const signupId = invoice.subscription_details?.metadata?.signupId;
+        if (signupId) {
+          updateSignup(signupId, { status: 'past_due' });
+          console.log(`⚠ Signup ${signupId} marked past_due.`);
+        }
+      } else if (event.type === 'invoice.paid') {
+        // Renewal — refresh renewedAt on the signup if we can find it.
+        const invoice = event.data.object;
+        const signupId = invoice.subscription_details?.metadata?.signupId;
+        if (signupId && invoice.billing_reason === 'subscription_cycle') {
+          updateSignup(signupId, {
+            status: 'paid',
+            lastRenewedAt: new Date().toISOString(),
+          });
+          console.log(`↻ Signup ${signupId} renewed.`);
+        }
       }
+    } catch (handlerErr) {
+      console.error('Webhook handler error:', handlerErr);
     }
 
     res.json({ received: true });
@@ -343,24 +392,28 @@ app.post('/api/signup', async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       ui_mode: 'embedded',
-      mode: 'payment',
+      mode: 'subscription',
       customer_email: signup.parent.email,
       line_items: [
         {
           price_data: {
             currency: EVENT.currency,
             product_data: {
-              name: `${EVENT.name} — registration`,
+              name: `${EVENT.name} — annual membership`,
               description: `${signup.children.length} child${
                 signup.children.length > 1 ? 'ren' : ''
               }: ${signup.children.map((c) => c.name).join(', ')}`,
             },
             unit_amount: EVENT.priceCents,
+            recurring: { interval: 'year' },
           },
           quantity: signup.children.length,
         },
       ],
       metadata: { signupId: id },
+      // Stripe also attaches this to the created subscription so we can correlate
+      // future subscription events (renewal, cancellation) back to this signup.
+      subscription_data: { metadata: { signupId: id } },
       // After payment Stripe calls this URL with {CHECKOUT_SESSION_ID} replaced.
       return_url: `${PUBLIC_URL}/success.html?sid=${id}&cs={CHECKOUT_SESSION_ID}`,
     });
@@ -393,6 +446,8 @@ app.post('/api/confirm', async (req, res) => {
       const updated = updateSignup(sid, {
         status: 'paid',
         stripeSessionId: session.id,
+        stripeSubscriptionId: session.subscription || null,
+        stripeCustomerId: session.customer || null,
         amountPaid: session.amount_total,
         paidAt: new Date().toISOString(),
       });
@@ -402,6 +457,33 @@ app.post('/api/confirm', async (req, res) => {
     res.status(402).json({ error: 'Payment not completed' });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Parents click a link from their confirmation email; this redirects them
+// to the Stripe-hosted customer portal where they can cancel, update their
+// card, view invoices, etc. The `sid` is a 16-hex-char token — not secret,
+// but not guessable — which is a reasonable trade-off for email links.
+app.get('/manage', async (req, res) => {
+  const sid = req.query.sid;
+  if (!stripe) return res.status(503).send('Stripe not configured on this server.');
+  if (!sid) return res.status(400).send('Missing signup reference.');
+  const row = readSignups().find((r) => r.id === sid);
+  if (!row) return res.status(404).send('We could not find that subscription. Reply to your confirmation email and we will sort it out.');
+  if (!row.stripeCustomerId) {
+    return res.status(400).send('This signup does not have an associated subscription yet. Please try again after the payment completes.');
+  }
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer: row.stripeCustomerId,
+      return_url: `${PUBLIC_URL}/`,
+    });
+    res.redirect(session.url);
+  } catch (err) {
+    console.error('billingPortal.sessions.create failed:', err);
+    res.status(500).send(
+      'Could not open the subscription portal. If this keeps happening, check that the Customer Portal is activated at https://dashboard.stripe.com/test/settings/billing/portal'
+    );
   }
 });
 

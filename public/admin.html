@@ -34,17 +34,23 @@
       }
 
       function render(rows) {
-        const paid = rows.filter((r) => r.status === 'paid');
-        const pending = rows.filter((r) => r.status !== 'paid');
-        const totalKids = paid.reduce((s, r) => s + r.children.length, 0);
-        const totalCents = paid.reduce((s, r) => s + (r.amountPaid || 0), 0);
+        const active = rows.filter((r) => r.status === 'paid');
+        const cancelled = rows.filter((r) => r.status === 'cancelled');
+        const pastDue = rows.filter((r) => r.status === 'past_due');
+        const pending = rows.filter((r) => r.status === 'pending');
+        const totalKids = active.reduce((s, r) => s + r.children.length, 0);
+        const totalCents = active.reduce((s, r) => s + (r.amountPaid || 0), 0);
         document.getElementById('stats').textContent =
-          paid.length + ' paid registrations · ' + totalKids + ' children · ' +
+          active.length + ' active subscriptions · ' + totalKids + ' children · ' +
           (totalCents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' }) +
-          ' collected · ' + pending.length + ' pending';
+          ' collected · ' + pastDue.length + ' past-due · ' +
+          cancelled.length + ' cancelled · ' + pending.length + ' pending';
 
         const cols = [
-          ['Status', (r) => '<span class="pill pill-' + r.status + '">' + r.status + '</span>'],
+          ['Status', (r) => {
+            const label = r.status === 'paid' ? 'active' : r.status;
+            return '<span class="pill pill-' + r.status + '">' + label + '</span>';
+          }],
           ['Parent', (r) => escapeHtml(r.parent.name) + '<br><small class="muted">' +
             escapeHtml(r.parent.email) + ' · ' + escapeHtml(r.parent.phone) + '</small>'],
           ['Emergency', (r) => escapeHtml(r.emergency.name) + '<br><small class="muted">' +

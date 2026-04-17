@@ -213,3 +213,5 @@ tr:last-child td { border-bottom: none; }
 }
 .pill-paid { background: var(--ok-bg); color: var(--ok); }
 .pill-pending { background: var(--warn-bg); color: var(--warn); }
+.pill-past_due { background: var(--danger-bg); color: var(--danger); }
+.pill-cancelled { background: #f3f4f6; color: #6b7280; text-decoration: line-through; }
