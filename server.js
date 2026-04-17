@@ -393,6 +393,8 @@ app.post('/api/signup', async (req, res) => {
         const age = Number(c?.age);
         if (!Number.isFinite(age) || age < 0 || age > 18)
           errors.push(`Child #${i + 1}: age must be between 0 and 18.`);
+        if (!c?.photoConsent)
+          errors.push(`Child #${i + 1}: photo/video consent is required to register.`);
       });
     }
 
@@ -426,7 +428,6 @@ app.post('/api/signup', async (req, res) => {
         name: c.name.trim(),
         age: Number(c.age),
         allergies: (c.allergies || '').trim(),
-        medicalNotes: (c.medicalNotes || '').trim(),
         photoConsent: !!c.photoConsent,
       })),
     };

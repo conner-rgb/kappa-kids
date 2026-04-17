@@ -58,7 +58,6 @@
           ['Children', (r) => r.children.map((c) =>
             '<div>' + escapeHtml(c.name) + ' (' + c.age + ')' +
               (c.allergies ? '<br><small class="muted">Allergies: ' + escapeHtml(c.allergies) + '</small>' : '') +
-              (c.medicalNotes ? '<br><small class="muted">Medical: ' + escapeHtml(c.medicalNotes) + '</small>' : '') +
               (c.photoConsent ? '<br><small class="muted">✓ Photo consent</small>' : '') +
             '</div>'
           ).join('')],
@@ -86,7 +85,7 @@
           'status','createdAt','paidAt','amount',
           'parentName','parentEmail','parentPhone',
           'emergencyName','emergencyPhone',
-          'childName','childAge','allergies','medicalNotes','photoConsent'
+          'childName','childAge','allergies','photoConsent'
         ];
         const lines = [header.join(',')];
         rows.forEach((r) => {
@@ -95,7 +94,7 @@
               r.status, r.createdAt, r.paidAt || '', ((r.amountPaid || 0) / 100).toFixed(2),
               r.parent.name, r.parent.email, r.parent.phone,
               r.emergency.name, r.emergency.phone,
-              c.name, c.age, c.allergies, c.medicalNotes, c.photoConsent ? 'yes' : 'no',
+              c.name, c.age, c.allergies, c.photoConsent ? 'yes' : 'no',
             ].map(csvCell).join(','));
           });
         });
