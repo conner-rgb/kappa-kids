@@ -38,12 +38,14 @@
             const amt = (data.amountPaid / 100).toLocaleString(undefined, {
               style: 'currency', currency: 'USD',
             });
+            const extra = data.autoRenew
+              ? '<br><br><span style="font-size:0.92rem;">Your membership will auto-renew at ' + amt +
+                ' each year until you cancel. You can cancel or update your card any time via the link in your confirmation email.</span>'
+              : '<br><br><span style="font-size:0.92rem;">This is a one-year membership \u2014 there\'s no auto-renewal, so you\'ll need to sign up again next year if you want to continue.</span>';
             msg.innerHTML =
               'Thanks, <strong>' + escapeHtml(data.parentName) + '</strong>! ' +
               'We\'ve registered ' + data.childCount + ' child' + (data.childCount > 1 ? 'ren' : '') +
-              '. Your card was charged ' + amt + ' and a receipt is on its way.' +
-              '<br><br><span style="font-size:0.92rem;">This is an annual membership — we\'ll bill ' + amt +
-              ' each year until you cancel. You can cancel or update your card any time via the link in your confirmation email.</span>';
+              '. Your card was charged ' + amt + ' and a receipt is on its way.' + extra;
           } else {
             msg.textContent = 'Your signup is recorded. Payment is still processing — you\'ll get an email receipt shortly.';
           }

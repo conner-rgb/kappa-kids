@@ -15,19 +15,41 @@
           <span class="step-sep">›</span>
           <span class="step current">2. Payment</span>
         </div>
-        <h1>Enter your payment details</h1>
-        <p class="muted">Annual membership — auto-renews each year. Cancel any time.</p>
+        <h1>Review &amp; pay</h1>
+        <p class="muted">Secure payment processing by Stripe.</p>
       </header>
 
-      <div id="checkout" class="card">
+      <!-- Stage 1: review + auto-renew choice -->
+      <section id="review" class="card" hidden>
+        <h2 style="margin-top:0;">Your membership</h2>
+        <p id="summary" class="muted"></p>
+        <label class="checkbox renew-box">
+          <input type="checkbox" id="auto-renew" checked />
+          <span>
+            <strong>Auto-renew each year (recommended)</strong><br>
+            <span class="muted small">
+              We'll bill your card <span id="renew-amount"></span> every year on this date until you cancel.
+              You can cancel any time from the link in your confirmation email. Uncheck this to make it a one-time
+              <span id="one-time-amount"></span> payment with no renewal.
+            </span>
+          </span>
+        </label>
+        <div class="submit-row" style="margin-top:8px;">
+          <div></div>
+          <button id="proceed" class="primary">Continue to payment →</button>
+        </div>
+      </section>
+
+      <!-- Stage 2: Stripe embedded checkout -->
+      <div id="checkout" class="card" hidden>
         <p class="muted center" id="checkout-loading">Loading secure payment form…</p>
       </div>
 
+      <!-- Dev mode preview (no Stripe keys) -->
       <div id="dev-banner" class="card center" hidden>
         <h2>Dev mode</h2>
         <p class="muted">
-          No Stripe keys configured. Click below to simulate a successful payment
-          so you can preview the flow.
+          No Stripe keys configured. Click below to simulate a successful payment so you can preview the flow.
         </p>
         <button id="dev-pay" class="primary">Simulate successful payment</button>
       </div>
@@ -42,51 +64,105 @@
       const sid = params.get('sid');
       const dev = params.get('dev') === '1';
 
+      function fmtMoney(cents, currency) {
+        return new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency: (currency || 'usd').toUpperCase(),
+        }).format(cents / 100);
+      }
+
       async function init() {
         if (!sid) {
-          document.getElementById('checkout').innerHTML =
-            '<p class="errors">Missing signup reference. <a href="/">Start over</a>.</p>';
+          document.body.innerHTML =
+            '<main class="container narrow"><div class="card"><p class="errors">' +
+            'Missing signup reference. <a href="/">Start over</a>.</p></div></main>';
           return;
         }
 
+        // Dev mode: skip everything, show simulate button.
         if (dev) {
-          document.getElementById('checkout').hidden = true;
           document.getElementById('dev-banner').hidden = false;
           document.getElementById('dev-pay').onclick = async () => {
-            // Mark paid via a tiny admin-free endpoint: just hit /api/confirm
-            // without a cs param — server won't mark it paid, but we'll route
-            // the user through success anyway since this is dev mode.
-            await fetch('/api/confirm-dev/' + encodeURIComponent(sid), { method: 'POST' })
-              .catch(() => {});
+            await fetch('/api/confirm-dev/' + encodeURIComponent(sid), { method: 'POST' }).catch(() => {});
             location.href = '/success.html?sid=' + encodeURIComponent(sid) + '&dev=1';
           };
           return;
         }
 
-        const [cfgRes, coRes] = await Promise.all([
+        // If the user refreshed after already creating a session, pick up where they left off.
+        const [cfgRes, coRes, evRes] = await Promise.all([
           fetch('/api/stripe-config'),
           fetch('/api/checkout/' + encodeURIComponent(sid)),
+          fetch('/api/event'),
         ]);
         const cfg = await cfgRes.json();
         const co = await coRes.json();
+        const ev = await evRes.json();
 
         if (co.status === 'paid') {
           location.href = '/success.html?sid=' + encodeURIComponent(sid);
           return;
         }
 
-        if (!cfg.configured || !co.clientSecret) {
+        if (!cfg.configured) {
+          document.getElementById('review').hidden = true;
+          document.getElementById('checkout').hidden = false;
           document.getElementById('checkout').innerHTML =
-            '<p class="errors">Stripe isn\'t fully configured yet. ' +
-            'Add <code>STRIPE_SECRET_KEY</code> and <code>STRIPE_PUBLISHABLE_KEY</code> to your .env and restart the server.</p>';
+            '<p class="errors">Stripe isn\'t fully configured. Contact the event organizer.</p>';
           return;
         }
 
-        const stripe = Stripe(cfg.publishableKey);
-        const checkout = await stripe.initEmbeddedCheckout({
-          clientSecret: co.clientSecret,
-        });
-        document.getElementById('checkout-loading').remove();
+        if (co.clientSecret) {
+          // Session already exists (refresh case). Mount straight into Stripe.
+          await mountCheckout(cfg.publishableKey, co.clientSecret);
+          return;
+        }
+
+        // Fresh flow: show the review + auto-renew checkbox.
+        const per = fmtMoney(ev.priceCents, ev.currency);
+        document.getElementById('summary').innerHTML =
+          'Today: <strong>' + per + ' per child</strong> · covers the full year.';
+        document.getElementById('renew-amount').textContent = per + ' per child';
+        document.getElementById('one-time-amount').textContent = per + ' per child';
+        document.getElementById('review').hidden = false;
+        document.getElementById('proceed').addEventListener('click', onProceed);
+      }
+
+      async function onProceed() {
+        const btn = document.getElementById('proceed');
+        btn.disabled = true;
+        btn.textContent = 'Loading payment form…';
+
+        const autoRenew = document.getElementById('auto-renew').checked;
+        let data;
+        try {
+          const res = await fetch('/api/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sid, autoRenew }),
+          });
+          data = await res.json();
+          if (!res.ok || !data.clientSecret) throw new Error(data.error || 'No session');
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'Continue to payment →';
+          alert('Could not start payment. Please try again.');
+          return;
+        }
+
+        // Swap the review card for the embedded Stripe form.
+        document.getElementById('review').hidden = true;
+        document.getElementById('checkout').hidden = false;
+        const cfgRes = await fetch('/api/stripe-config');
+        const cfg = await cfgRes.json();
+        await mountCheckout(cfg.publishableKey, data.clientSecret);
+      }
+
+      async function mountCheckout(publishableKey, clientSecret) {
+        const stripe = Stripe(publishableKey);
+        const checkout = await stripe.initEmbeddedCheckout({ clientSecret });
+        const loading = document.getElementById('checkout-loading');
+        if (loading) loading.remove();
         checkout.mount('#checkout');
       }
 

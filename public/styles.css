@@ -104,6 +104,15 @@ label.checkbox {
 }
 label.checkbox input { margin-top: 4px; }
 
+label.renew-box {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f7fafd;
+  margin: 10px 0 4px;
+}
+label.renew-box strong { color: var(--ink); }
+
 input[type="text"],
 input[type="email"],
 input[type="tel"],

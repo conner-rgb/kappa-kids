@@ -82,8 +82,8 @@ async function sendConfirmationEmail(signup) {
     const isSub = !!signup.stripeSubscriptionId;
     const manageUrl = `${PUBLIC_URL}/manage?sid=${signup.id}`;
     const renewalNote = isSub
-      ? `This is an annual membership — your card will be charged ${amount} again each year until you cancel.`
-      : null;
+      ? `Your membership will auto-renew at ${amount} each year until you cancel.`
+      : `This is a one-year membership — there's no auto-renewal, so you'll need to sign up again next year to continue.`;
 
     const text = [
       `Hi ${signup.parent.name},`,
@@ -289,6 +289,61 @@ app.get('/api/stripe-config', (req, res) => {
   });
 });
 
+// Create the Stripe Checkout session once the parent has picked one-time vs.
+// auto-renew on /pay.html. Returns the client_secret for the embedded UI.
+app.post('/api/checkout', async (req, res) => {
+  const { sid, autoRenew } = req.body || {};
+  if (!sid) return res.status(400).json({ error: 'Missing sid' });
+  const row = readSignups().find((r) => r.id === sid);
+  if (!row) return res.status(404).json({ error: 'Signup not found' });
+  if (row.status === 'paid') return res.status(409).json({ error: 'Already paid' });
+
+  const id = row.id;
+  // Note which choice the parent made so we can show correct messaging later.
+  updateSignup(id, { autoRenew: !!autoRenew });
+
+  if (!stripe) {
+    return res.json({ devMode: true, next: `/pay.html?sid=${id}&dev=1` });
+  }
+
+  try {
+    const childCount = row.children.length;
+    const descLine = `${childCount} child${childCount > 1 ? 'ren' : ''}: ` +
+      row.children.map((c) => c.name).join(', ');
+
+    const baseLine = {
+      currency: EVENT.currency,
+      product_data: {
+        name: autoRenew
+          ? `${EVENT.name} — annual membership`
+          : `${EVENT.name} — one-year membership (no renewal)`,
+        description: descLine,
+      },
+      unit_amount: EVENT.priceCents,
+    };
+    if (autoRenew) baseLine.recurring = { interval: 'year' };
+
+    const sessionArgs = {
+      ui_mode: 'embedded',
+      mode: autoRenew ? 'subscription' : 'payment',
+      customer_email: row.parent.email,
+      line_items: [{ price_data: baseLine, quantity: childCount }],
+      metadata: { signupId: id, autoRenew: autoRenew ? '1' : '0' },
+      return_url: `${PUBLIC_URL}/success.html?sid=${id}&cs={CHECKOUT_SESSION_ID}`,
+    };
+    if (autoRenew) {
+      sessionArgs.subscription_data = { metadata: { signupId: id } };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionArgs);
+    updateSignup(id, { stripeSessionId: session.id });
+    res.json({ clientSecret: session.client_secret });
+  } catch (err) {
+    console.error('POST /api/checkout failed:', err);
+    res.status(500).json({ error: 'Could not create checkout session. Please try again.' });
+  }
+});
+
 // Given our signup id, return the Stripe session's client_secret so /pay.html
 // can re-mount the embedded checkout if the page is refreshed.
 app.get('/api/checkout/:id', async (req, res) => {
@@ -379,50 +434,12 @@ app.post('/api/signup', async (req, res) => {
     rows.push(signup);
     writeSignups(rows);
 
-    // ---- Create embedded Stripe Checkout session ----
-    if (!stripe) {
-      // Dev fallback so you can demo the UI without Stripe keys.
-      // Returns no clientSecret — /pay.html detects this and shows a stub.
-      return res.json({
-        signupId: id,
-        devMode: true,
-        next: `/pay.html?sid=${id}&dev=1`,
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      ui_mode: 'embedded',
-      mode: 'subscription',
-      customer_email: signup.parent.email,
-      line_items: [
-        {
-          price_data: {
-            currency: EVENT.currency,
-            product_data: {
-              name: `${EVENT.name} — annual membership`,
-              description: `${signup.children.length} child${
-                signup.children.length > 1 ? 'ren' : ''
-              }: ${signup.children.map((c) => c.name).join(', ')}`,
-            },
-            unit_amount: EVENT.priceCents,
-            recurring: { interval: 'year' },
-          },
-          quantity: signup.children.length,
-        },
-      ],
-      metadata: { signupId: id },
-      // Stripe also attaches this to the created subscription so we can correlate
-      // future subscription events (renewal, cancellation) back to this signup.
-      subscription_data: { metadata: { signupId: id } },
-      // After payment Stripe calls this URL with {CHECKOUT_SESSION_ID} replaced.
-      return_url: `${PUBLIC_URL}/success.html?sid=${id}&cs={CHECKOUT_SESSION_ID}`,
-    });
-
-    updateSignup(id, { stripeSessionId: session.id });
+    // The Stripe Checkout session is created later (POST /api/checkout) after
+    // the parent picks one-time vs. auto-renew on /pay.html. Hand them off now.
     res.json({
       signupId: id,
-      clientSecret: session.client_secret,
-      next: `/pay.html?sid=${id}`,
+      devMode: !stripe,
+      next: stripe ? `/pay.html?sid=${id}` : `/pay.html?sid=${id}&dev=1`,
     });
   } catch (err) {
     console.error('POST /api/signup failed:', err);
@@ -512,6 +529,7 @@ app.get('/api/signup/:id', (req, res) => {
     parentName: row.parent.name,
     childCount: row.children.length,
     amountPaid: row.amountPaid || 0,
+    autoRenew: !!row.autoRenew,
   });
 });
 
